@@ -14,6 +14,7 @@ import * as path from "path";
 import { findCaseRoot, resolveInclude, resolveIncludeDirective, resolveVariable, uriToPath, collectVariables, getCaseVariableNames } from './caseContext';
 import { closestMatch } from '../shared/levenshtein';
 import { applyDbOverrides } from './dbOverrides';
+import { formatOpenFoam } from './format';
 import {
   scanCaseGeometry, getSurfaceNames,
   getBoundaryPatchNames, getSTLRegionsForSurface,
@@ -2396,63 +2397,7 @@ class OpenFOAMLanguageServer {
   private onDocumentFormatting(_params: DocumentFormattingParams): TextEdit[] {
     const doc = this.docs.get(_params.textDocument.uri);
     if (!doc) return [];
-
-    const rawLines = doc.getText().split('\n');
-    const out: string[] = [];
-    let depth = 0;
-    const ind = (n: number) => '    '.repeat(Math.max(0, n));
-
-    for (const rawLine of rawLines) {
-      const stripped = rawLine.trim();
-      if (!stripped) { out.push(''); continue; }
-
-      const noComment = stripped.replace(/\/\/.*/, '');
-      let opens = 0, closes = 0;
-      for (const ch of noComment) {
-        if (ch === '{') opens++;
-        else if (ch === '}') closes++;
-      }
-
-      // Standalone closing brace(s)
-      if (opens === 0 && closes > 0) {
-        depth = Math.max(0, depth - closes);
-        out.push(ind(depth) + stripped);
-        continue;
-      }
-
-      // Line ending with { — split keyword from brace for OpenFOAM style
-      if (stripped.endsWith('{') && opens === 1 && closes === 0) {
-        const prefix = stripped.slice(0, -1).trim();
-        if (prefix && !prefix.startsWith('//')) {
-          out.push(ind(depth) + prefix);
-          out.push(ind(depth) + '{');
-        } else {
-          out.push(ind(depth) + stripped);
-        }
-        depth++;
-        continue;
-      }
-
-      // Mixed braces on same line
-      if (opens > 0 || closes > 0) {
-        if (closes > opens) depth = Math.max(0, depth - (closes - opens));
-        out.push(ind(depth) + stripped);
-        if (opens > closes) depth += opens - closes;
-        continue;
-      }
-
-      out.push(ind(depth) + stripped);
-    }
-
-    // Collapse 3+ consecutive blank lines to 2
-    const collapsed: string[] = [];
-    let blanks = 0;
-    for (const line of out) {
-      if (!line.trim()) { if (++blanks <= 2) collapsed.push(''); }
-      else { blanks = 0; collapsed.push(line); }
-    }
-
-    const newText = collapsed.join('\n');
+    const newText = formatOpenFoam(doc.getText());
     if (newText === doc.getText()) return [];
     return [TextEdit.replace(
       { start: {line:0,character:0}, end: {line: doc.lineCount, character: 0} },

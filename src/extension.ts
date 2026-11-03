@@ -499,53 +499,19 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Auto-detect OpenFOAM files based on directory structure
-  const autoDetectDisposable = vscode.workspace.onDidOpenTextDocument(
-    async (document: vscode.TextDocument) => {
-      // Skip if already set to openfoam or if it's not a file
-      if (
-        document.languageId === "openfoam" ||
-        document.uri.scheme !== "file"
-      ) {
-        return;
-      }
-
-      const filePath = document.uri.fsPath;
-      const fileName = path.basename(filePath);
-
-      const hasNoExtension = !fileName.includes(".");
-      const hasOrigExtension = fileName.endsWith(".orig");
-
-      if ((hasNoExtension || hasOrigExtension) && _isInOpenFOAMCase(filePath)) {
-        try {
-          await vscode.languages.setTextDocumentLanguage(document, "openfoam");
-        } catch (error) {
-          console.error("Failed to set language mode:", error);
-        }
-      }
-    },
-  );
+  // Auto-detect OpenFOAM files (see isOpenFoamDocument)
+  const setIfOpenFoam = async (document: vscode.TextDocument) => {
+    if (!isOpenFoamDocument(document)) return;
+    try {
+      await vscode.languages.setTextDocumentLanguage(document, "openfoam");
+    } catch (error) {
+      console.error("Failed to set language mode:", error);
+    }
+  };
+  const autoDetectDisposable = vscode.workspace.onDidOpenTextDocument(setIfOpenFoam);
 
   // Also check currently open documents on activation
-  vscode.workspace.textDocuments.forEach(async (document: vscode.TextDocument) => {
-    if (document.languageId === "openfoam" || document.uri.scheme !== "file") {
-      return;
-    }
-
-    const filePath = document.uri.fsPath;
-    const fileName = path.basename(filePath);
-
-    const hasNoExtension = !fileName.includes(".");
-    const hasOrigExtension = fileName.endsWith(".orig");
-
-    if ((hasNoExtension || hasOrigExtension) && _isInOpenFOAMCase(filePath)) {
-      try {
-        await vscode.languages.setTextDocumentLanguage(document, "openfoam");
-      } catch (error) {
-        console.error("Failed to set language mode:", error);
-      }
-    }
-  });
+  vscode.workspace.textDocuments.forEach(setIfOpenFoam);
 
   context.subscriptions.push(
     refreshCommand,
@@ -597,17 +563,38 @@ export function deactivate(): Thenable<void> | undefined {
 const findCaseRoot = findCaseRootFromPath;
 
 /**
+ * Whether a document VS Code didn't already open as OpenFOAM is one: either a
+ * plain-text file with a `FoamFile { ... }` header (e.g. `U.air`,
+ * `controlDict.orig`, `caseParams`), or an extensionless / `.orig` file inside
+ * a case's system/, constant/, time or `0.orig` directory. `.m4` templates
+ * are left alone: they're macro sources, not dictionaries.
+ */
+function isOpenFoamDocument(document: vscode.TextDocument): boolean {
+  if (document.languageId === "openfoam" || document.uri.scheme !== "file") return false;
+  const filePath = document.uri.fsPath;
+  const fileName = path.basename(filePath);
+  if (fileName.endsWith(".m4")) return false;
+  if (document.languageId === "plaintext") {
+    const head = document.getText(new vscode.Range(0, 0, 60, 0));
+    if (/^\s*FoamFile\s*(\{|$)/m.test(head)) return true;
+  }
+  const hasNoExtension = !fileName.includes(".");
+  const hasOrigExtension = fileName.endsWith(".orig");
+  return (hasNoExtension || hasOrigExtension) && _isInOpenFOAMCase(filePath);
+}
+
+/**
  * Check if a file path is inside an OpenFOAM case directory.
  * Walks up from the file to find system/ or constant/ siblings.
  */
 function _isInOpenFOAMCase(filePath: string): boolean {
   const WITH_SYSTEM = /\/system\//.test(filePath);
   const WITH_CONSTANT = /\/constant\//.test(filePath);
-  const IN_TIME_DIR = /\/\d+(\.\d+)?\//.test(filePath);
+  const IN_TIME_DIR = /\/\d+(\.\d+)?(\.orig|\.org)?\//.test(filePath);
   if (WITH_SYSTEM || WITH_CONSTANT) return true;
   if (!IN_TIME_DIR) {
     const dirName = path.basename(path.dirname(filePath));
-    if (dirName === "system" || dirName === "constant" || /^\d+(\.\d+)?$/.test(dirName)) {
+    if (dirName === "system" || dirName === "constant" || /^\d+(\.\d+)?(\.orig|\.org)?$/.test(dirName)) {
       let dir = path.dirname(filePath);
       for (let i = 0; i < 3; i++) {
         const parent = path.dirname(dir);
