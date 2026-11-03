@@ -1,0 +1,212 @@
+================================================================================
+scoped, negated and braced references
+================================================================================
+
+a $/b/c;
+d $../e;
+f $:g.h;
+i ( -$w2 $x0 );
+j ${../../master/patchFields};
+k ${_${FOAM_EXECUTABLE}};
+relaxationFactors { $relaxationFactors-SIMPLE }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (dollar_reference)))
+  (entry
+    (identifier)
+    (value
+      (dollar_reference)))
+  (entry
+    (identifier)
+    (value
+      (dollar_reference)))
+  (entry
+    (identifier)
+    (value
+      (list
+        (value
+          (dollar_reference))
+        (value
+          (dollar_reference)))))
+  (entry
+    (identifier)
+    (value
+      (dollar_reference)))
+  (entry
+    (identifier)
+    (value
+      (dollar_reference)))
+  (block
+    (identifier)
+    (merge_entry
+      (dollar_reference))))
+
+================================================================================
+merge reference without a semicolon
+================================================================================
+
+p { $p_rgh }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (block
+    (identifier)
+    (merge_entry
+      (dollar_reference))))
+
+================================================================================
+inline expression
+================================================================================
+
+x ${{ 5*$a }};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (inline_expression))))
+
+================================================================================
+dimension sets with unit names and powers
+================================================================================
+
+a [0 1 -1 0 0 0 0];
+b [m^2 s^-1];
+absorptivity absorptivity [ m^-1 ] 0.01;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (dimension_set
+        (dimension_term)
+        (dimension_term)
+        (dimension_term)
+        (dimension_term)
+        (dimension_term)
+        (dimension_term)
+        (dimension_term))))
+  (entry
+    (identifier)
+    (value
+      (dimension_set
+        (dimension_term)
+        (dimension_term))))
+  (entry
+    (identifier)
+    (value
+      (identifier))
+    (value
+      (dimension_set
+        (dimension_term)))
+    (value
+      (number))))
+
+================================================================================
+numbers without a leading digit, and with a plus sign
+================================================================================
+
+y1 -.01;
+y2 +1.5e-3;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (number)))
+  (entry
+    (identifier)
+    (value
+      (number))))
+
+================================================================================
+uniform list
+================================================================================
+
+searchBoxDivisions 3{(64 64 1)};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (uniform_list
+        (number)
+        (value
+          (list
+            (value
+              (number))
+            (value
+              (number))
+            (value
+              (number))))))))
+
+================================================================================
+entry ending in a sub-dictionary
+================================================================================
+
+div(phi,Yi_h) Gauss multivariateSelection
+{
+    Yi limitedLinear01 1;
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier
+      (call_key))
+    (value
+      (identifier))
+    (value
+      (identifier))
+    (dict_value
+      (entry
+        (identifier)
+        (value
+          (identifier))
+        (value
+          (number))))))
+
+================================================================================
+bare top-level list
+================================================================================
+
+(
+(0 0 0)
+(1 2 3)
+)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (list
+    (value
+      (list
+        (value
+          (number))
+        (value
+          (number))
+        (value
+          (number))))
+    (value
+      (list
+        (value
+          (number))
+        (value
+          (number))
+        (value
+          (number))))))

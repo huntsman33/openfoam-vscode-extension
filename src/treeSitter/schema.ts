@@ -67,14 +67,24 @@ function unwrapValue(node: SyntaxNode): SyntaxNode {
   return node;
 }
 
+/** Values only known once OpenFOAM reads the dictionary: a $reference,
+ * #eval/#calc, ${{ }}, #codeStream or #{ }# code. */
+const DEFERRED_VALUE_TYPES = new Set([
+  "dollar_reference",
+  "expression_directive",
+  "inline_expression",
+  "code_stream_directive",
+  "verbatim",
+]);
+
 function checkValue(entryNode: SyntaxNode, key: string, spec: FieldSpec, out: SchemaDiagnostic[]) {
   const values = entryNode
     .childrenForFieldName("value")
     .filter((v): v is SyntaxNode => v != null)
     .map(unwrapValue);
   if (!values.length) return;
-  const hasReference = values.some(v => v.type === "dollar_reference");
-  if (hasReference) return; // can't statically validate a $reference's eventual value
+  const hasReference = values.some(v => DEFERRED_VALUE_TYPES.has(v.type));
+  if (hasReference) return; // can't statically validate a value it doesn't know yet
 
   if (spec.options?.length) {
     const rawJoined = values.map(v => v.text).join(" ");

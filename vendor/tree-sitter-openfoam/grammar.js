@@ -23,7 +23,7 @@ module.exports = grammar({
     source_file: ($) => repeat($._item),
 
     _item: ($) =>
-      choice($.directive, $.block, $.entry, $.merge_entry, $.sized_list),
+      choice($.directive, $.block, $.entry, $.merge_entry, $.sized_list, $.list),
 
     // block: identifier|dotted-identifier|quoted-string '{' entry* '}',
     // or an anonymous `{ ... }` block (used as a bare list element, e.g.
@@ -44,13 +44,32 @@ module.exports = grammar({
     // (e.g. `cuttingPatches();`, where the whole thing including the
     // empty parens is one atomic keyword per OpenFOAM's own word
     // tokenizer, which treats `(`/`)`/`,` as ordinary word characters).
+    //
+    // A value list may also end in a sub-dictionary, as in fvSchemes'
+    // `div(phi,Yi_h) Gauss multivariateSelection { Yi limitedLinear01 1; };`
+    // (at least one plain value first, so this never competes with a
+    // named block).
     entry: ($) =>
-      seq(field("key", $._name), field("value", repeat($.value)), ";"),
+      choice(
+        seq(field("key", $._name), field("value", repeat($.value)), ";"),
+        seq(
+          field("key", $._name),
+          field("value", repeat1($.value)),
+          field("dict", $.dict_value),
+          optional(";"),
+        ),
+      ),
+
+    dict_value: ($) => seq("{", repeat($._item), "}"),
 
     // `$ref;` on its own — merges/includes a referenced sub-dict in
     // place (e.g. `$p_rghFinal;` inside an fvSolution solver block).
-    merge_entry: ($) => seq($.dollar_reference, ";"),
+    // OpenFOAM doesn't require the ';' (`{ $_newFromPatch }`).
+    merge_entry: ($) => prec.right(seq($.dollar_reference, optional(";"))),
 
+    // (A bare top-level `( ... )` list, without the count, is also accepted:
+    // e.g. a vectorField of cloud positions.)
+    //
     // A count-prefixed top-level list, as used by whole-file list
     // formats like `constant/polyMesh/boundary`, `points`, `faces`:
     // `6\n(\n    patchName { ... }\n    ...\n)`. No trailing ';'.
@@ -62,18 +81,53 @@ module.exports = grammar({
       choice(
         $.number,
         $.dollar_reference,
+        $.inline_expression,
+        $.expression_directive,
+        $.verbatim,
         $.string,
         $.list,
         $.dimension_set,
+        $.uniform_list,
+        $.code_stream_directive,
         $.identifier,
       ),
 
+    // `3{(64 64 1)}`: a list of 3 copies of the value in braces.
+    uniform_list: ($) =>
+      prec(2, seq(field("count", $.number), token.immediate("{"), field("element", $.value), "}")),
+
+    // `#eval{ 1/$x }`, `#eval "1/$x"`, `#eval #{ 1/$x #}`, `#calc "1/$x"`:
+    // an expression evaluated while the dictionary is read, usable
+    // anywhere a value is (`nu #eval{ $U*$L/$Re };`, `($x0 #eval{ -$b } 0)`).
+    expression_directive: ($) =>
+      seq(
+        field("name", choice("#eval", "#calc")),
+        field("body", choice($.expression_body, $.string, $.verbatim)),
+      ),
+
+    // The `{ ... }` of `#eval{ ... }`: one token, with one level of
+    // nested braces allowed.
+    expression_body: (_$) => token(seq("{", /([^{}]|\{[^{}]*\})*/, "}")),
+
+    // `#{ ... #}` verbatim text (C++ for coded conditions and #codeStream,
+    // or an expression): any characters up to the closing `#}`.
+    verbatim: (_$) => token(seq("#{", /([^#]|#[^}])*/, "#}")),
+
+    // `${{ 5*$x }}`: inline expression, evaluated where it appears.
+    inline_expression: (_$) => token(prec(1, seq("${{", /([^}]|\}[^}])*/, "}}"))),
+
     // A parenthesized list of values and/or nested blocks (e.g. a
     // vector `(0 0 0)`, a list of scalars, or `6 ( patchName { ... } ... )`).
-    list: ($) => seq("(", repeat(choice($.value, $.block)), ")"),
+    // Directives are allowed too: `polyLine 4 8 ( #include "points" )`.
+    // (#codeStream inside a list is a value.)
+    list: ($) =>
+      seq("(", repeat(choice($.value, $.block, $.include_directive, $.conditional_directive)), ")"),
 
-    // OpenFOAM dimension set, e.g. `[0 1 -1 0 0 0 0]` or `[kg m s]`.
-    dimension_set: ($) => seq("[", repeat(choice($.number, $.identifier)), "]"),
+    // OpenFOAM dimension set, e.g. `[0 1 -1 0 0 0 0]`, `[kg m s]` or
+    // `[m^2 s^-1]`, `[ m^-1 ]`.
+    dimension_set: ($) => seq("[", repeat($.dimension_term), "]"),
+
+    dimension_term: (_$) => /[^\[\]\s;]+/,
 
     // #include "file"; #inputMode merge; #if 0 ... #else ... #endif;
     // #codeStream { ... }; etc. Modeled as flat, first-class directive
@@ -88,6 +142,8 @@ module.exports = grammar({
     directive: ($) =>
       choice(
         $.include_directive,
+        $.include_func_directive,
+        $.remove_directive,
         $.input_mode_directive,
         $.conditional_directive,
         $.code_stream_directive,
@@ -99,15 +155,30 @@ module.exports = grammar({
       seq(
         field(
           "name",
-          choice(
-            "#include",
-            "#includeIfPresent",
-            "#includeEtc",
-            "#includeFunc",
-          ),
+          choice("#include", "#sinclude", "#includeIfPresent", "#includeEtc"),
         ),
         field("path", $.string),
+        optional(";"),
       ),
+
+    // `#includeFunc solverInfo`, `#includeFunc "streamlines"`,
+    // `#includeFunc singleGraph(start=(0 0 0), end=(1 0 0), fields=(U p))`:
+    // a function object name, not a file path.
+    include_func_directive: ($) =>
+      seq(
+        field("name", "#includeFunc"),
+        field("function", choice($.string, $.function_spec)),
+        optional(";"),
+      ),
+
+    // A name with an optional, immediately adjacent argument list (two
+    // levels of nested parentheses).
+    function_spec: (_$) =>
+      token(/[A-Za-z_][A-Za-z0-9_.:\-]*(\(([^()]|\(([^()]|\([^()]*\))*\))*\))?/),
+
+    // `#remove name`, `#remove "regex"`, `#remove (a b)`.
+    remove_directive: ($) =>
+      seq(field("name", "#remove"), field("target", choice($.identifier, $.string, $.list))),
 
     input_mode_directive: ($) =>
       seq("#inputMode", field("mode", $.identifier)),
@@ -119,7 +190,8 @@ module.exports = grammar({
         "#endif",
       ),
 
-    code_stream_directive: ($) => seq("#codeStream", field("body", $.block)),
+    // Also usable as a value: `vertices #codeStream { code #{ ... #}; };`
+    code_stream_directive: ($) => seq("#codeStream", field("body", $.dict_value)),
 
     message_directive: ($) =>
       seq(field("name", choice("#error", "#warning")), field("message", $.string)),
@@ -160,9 +232,19 @@ module.exports = grammar({
 
     operator: (_$) => /[*/+\-|]/,
 
-    number: (_$) => /-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?/,
+    // `1`, `-2.5e-3`, `+1`, `-.01`.
+    number: (_$) => /[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?/,
 
-    dollar_reference: (_$) => /\$\{?[A-Za-z_][A-Za-z0-9_.:]*\}?/,
+    // `$name`, negated `-$name`, scoped `$/a/b`, `$../a`, `$:a.b`, `$name-SIMPLE`, and braced
+    // `${name}`, `${../../master/patchFields}`, `${_${FOAM_EXECUTABLE}}`
+    // (one level of nesting).
+    dollar_reference: (_$) =>
+      token(
+        choice(
+          /-?\$[A-Za-z_./:~][A-Za-z0-9_.:\/\-]*/,
+          /-?\$\{([^{}]|\{[^{}]*\})*\}/,
+        ),
+      ),
 
     string: (_$) => /"([^"\\]|\\.)*"/,
 

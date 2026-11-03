@@ -51,6 +51,10 @@
           "named": true
         },
         {
+          "type": "list",
+          "named": true
+        },
+        {
           "type": "merge_entry",
           "named": true
         },
@@ -97,7 +101,7 @@
         "required": true,
         "types": [
           {
-            "type": "block",
+            "type": "dict_value",
             "named": true
           }
         ]
@@ -139,6 +143,41 @@
     }
   },
   {
+    "type": "dict_value",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "block",
+          "named": true
+        },
+        {
+          "type": "directive",
+          "named": true
+        },
+        {
+          "type": "entry",
+          "named": true
+        },
+        {
+          "type": "list",
+          "named": true
+        },
+        {
+          "type": "merge_entry",
+          "named": true
+        },
+        {
+          "type": "sized_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "dimension_set",
     "named": true,
     "fields": {},
@@ -147,11 +186,7 @@
       "required": false,
       "types": [
         {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "number",
+          "type": "dimension_term",
           "named": true
         }
       ]
@@ -182,11 +217,19 @@
           "named": true
         },
         {
+          "type": "include_func_directive",
+          "named": true
+        },
+        {
           "type": "input_mode_directive",
           "named": true
         },
         {
           "type": "message_directive",
+          "named": true
+        },
+        {
+          "type": "remove_directive",
           "named": true
         }
       ]
@@ -196,6 +239,16 @@
     "type": "entry",
     "named": true,
     "fields": {
+      "dict": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "dict_value",
+            "named": true
+          }
+        ]
+      },
       "key": {
         "multiple": false,
         "required": true,
@@ -217,6 +270,44 @@
           {
             "type": "value",
             "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "expression_directive",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression_body",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "verbatim",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "#calc",
+            "named": false
+          },
+          {
+            "type": "#eval",
+            "named": false
           }
         ]
       }
@@ -254,11 +345,11 @@
             "named": false
           },
           {
-            "type": "#includeFunc",
+            "type": "#includeIfPresent",
             "named": false
           },
           {
-            "type": "#includeIfPresent",
+            "type": "#sinclude",
             "named": false
           }
         ]
@@ -270,6 +361,36 @@
           {
             "type": "string",
             "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "include_func_directive",
+    "named": true,
+    "fields": {
+      "function": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "function_spec",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "#includeFunc",
+            "named": false
           }
         ]
       }
@@ -301,6 +422,14 @@
       "types": [
         {
           "type": "block",
+          "named": true
+        },
+        {
+          "type": "conditional_directive",
+          "named": true
+        },
+        {
+          "type": "include_directive",
           "named": true
         },
         {
@@ -383,6 +512,40 @@
     }
   },
   {
+    "type": "remove_directive",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "#remove",
+            "named": false
+          }
+        ]
+      },
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "list",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "sized_list",
     "named": true,
     "fields": {
@@ -430,6 +593,10 @@
           "named": true
         },
         {
+          "type": "list",
+          "named": true
+        },
+        {
           "type": "merge_entry",
           "named": true
         },
@@ -441,6 +608,32 @@
     }
   },
   {
+    "type": "uniform_list",
+    "named": true,
+    "fields": {
+      "count": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "number",
+            "named": true
+          }
+        ]
+      },
+      "element": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "value",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "value",
     "named": true,
     "fields": {},
@@ -448,6 +641,10 @@
       "multiple": false,
       "required": true,
       "types": [
+        {
+          "type": "code_stream_directive",
+          "named": true
+        },
         {
           "type": "dimension_set",
           "named": true
@@ -457,7 +654,15 @@
           "named": true
         },
         {
+          "type": "expression_directive",
+          "named": true
+        },
+        {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "inline_expression",
           "named": true
         },
         {
@@ -471,9 +676,21 @@
         {
           "type": "string",
           "named": true
+        },
+        {
+          "type": "uniform_list",
+          "named": true
+        },
+        {
+          "type": "verbatim",
+          "named": true
         }
       ]
     }
+  },
+  {
+    "type": "#calc",
+    "named": false
   },
   {
     "type": "#codeStream",
@@ -493,6 +710,10 @@
   },
   {
     "type": "#error",
+    "named": false
+  },
+  {
+    "type": "#eval",
     "named": false
   },
   {
@@ -521,6 +742,14 @@
   },
   {
     "type": "#inputMode",
+    "named": false
+  },
+  {
+    "type": "#remove",
+    "named": false
+  },
+  {
+    "type": "#sinclude",
     "named": false
   },
   {
@@ -561,11 +790,27 @@
     "extra": true
   },
   {
+    "type": "dimension_term",
+    "named": true
+  },
+  {
     "type": "directive_name",
     "named": true
   },
   {
     "type": "dollar_reference",
+    "named": true
+  },
+  {
+    "type": "expression_body",
+    "named": true
+  },
+  {
+    "type": "function_spec",
+    "named": true
+  },
+  {
+    "type": "inline_expression",
     "named": true
   },
   {
@@ -583,6 +828,10 @@
   },
   {
     "type": "string",
+    "named": true
+  },
+  {
+    "type": "verbatim",
     "named": true
   },
   {

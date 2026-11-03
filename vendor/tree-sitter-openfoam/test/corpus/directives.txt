@@ -1,0 +1,204 @@
+================================================================================
+eval with braces as a value
+================================================================================
+
+nu #eval{ $Ubar*$H/$Re };
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (expression_directive
+        (expression_body)))))
+
+================================================================================
+eval inside a vector, with nested parentheses and braces
+================================================================================
+
+start (#eval{ -$b } 0 #eval{ sqrt(pow($R, 2)) });
+n #eval{ round(($L - $x)*$n) };
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (list
+        (value
+          (expression_directive
+            (expression_body)))
+        (value
+          (number))
+        (value
+          (expression_directive
+            (expression_body))))))
+  (entry
+    (identifier)
+    (value
+      (expression_directive
+        (expression_body)))))
+
+================================================================================
+eval and calc with string and verbatim bodies
+================================================================================
+
+a #eval "1/$x";
+b #calc "$a*2";
+c #eval #{ $a + $b #};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (expression_directive
+        (string))))
+  (entry
+    (identifier)
+    (value
+      (expression_directive
+        (string))))
+  (entry
+    (identifier)
+    (value
+      (expression_directive
+        (verbatim)))))
+
+================================================================================
+verbatim code block
+================================================================================
+
+code
+#{
+    #include "fvCFD.H"
+    os << $a;
+#};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (verbatim))))
+
+================================================================================
+includeFunc forms
+================================================================================
+
+functions
+{
+    #includeFunc solverInfo
+    #includeFunc "streamlines"
+    #includeFunc singleGraph(start=(0 0 0), end=(1 0 0), fields=(U p))
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (block
+    (identifier)
+    (directive
+      (include_func_directive
+        (function_spec)))
+    (directive
+      (include_func_directive
+        (string)))
+    (directive
+      (include_func_directive
+        (function_spec)))))
+
+================================================================================
+include forms, with and without a trailing semicolon
+================================================================================
+
+#include "../system/caseParams"
+#includeEtc "caseDicts/setConstraintTypes";
+#sinclude "optional"
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (directive
+    (include_directive
+      (string)))
+  (directive
+    (include_directive
+      (string)))
+  (directive
+    (include_directive
+      (string))))
+
+================================================================================
+remove
+================================================================================
+
+#remove (a b)
+#remove c
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (directive
+    (remove_directive
+      (list
+        (value
+          (identifier))
+        (value
+          (identifier)))))
+  (directive
+    (remove_directive
+      (identifier))))
+
+================================================================================
+codeStream as a value and as a list element
+================================================================================
+
+vertices #codeStream { code #{ os << 1; #}; };
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (code_stream_directive
+        (dict_value
+          (entry
+            (identifier)
+            (value
+              (verbatim))))))))
+
+================================================================================
+include inside a list
+================================================================================
+
+edges
+(
+    polyLine 4 8
+    (
+        #include "geometry/polyLine_4to8"
+    )
+);
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (entry
+    (identifier)
+    (value
+      (list
+        (value
+          (identifier))
+        (value
+          (number))
+        (value
+          (number))
+        (value
+          (list
+            (include_directive
+              (string))))))))
