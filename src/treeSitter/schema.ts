@@ -121,6 +121,37 @@ function checkValue(entryNode: SyntaxNode, key: string, spec: FieldSpec, out: Sc
   }
 }
 
+/** True if `node`'s members aren't all written out in it: a direct `#include`
+ * (or other directive) or a `$merge` can supply keys this file doesn't show,
+ * so a "missing required key" can't be decided from the text. */
+function hasOpaqueMembers(node: SyntaxNode): boolean {
+  return node.namedChildren.some(c => c != null && (c.type === "directive" || c.type === "merge_entry"));
+}
+
+/** Every name referenced as a `$variable` anywhere in the file (including
+ * inside #eval bodies, which are single tokens), split into its scoped
+ * parts so `$:a.b` and `$/a/b` count for both `a` and `b`. */
+// Keyed by the Tree: web-tree-sitter hands out a new Node object on every access.
+const referencedNamesCache = new WeakMap<object, Set<string>>();
+function referencedNames(node: SyntaxNode): Set<string> {
+  let names = referencedNamesCache.get(node.tree);
+  if (!names) {
+    names = new Set();
+    for (const m of node.tree.rootNode.text.matchAll(/\$\{?([A-Za-z_./:][\w./:-]*)/g)) {
+      for (const part of m[1].split(/[./:]+/)) if (part) names.add(part);
+    }
+    referencedNamesCache.set(node.tree, names);
+  }
+  return names;
+}
+
+/** A key that isn't in the schema is still fine if it's a user variable:
+ * referenced as `$key`, or defined by an expression (`x #eval{ ... };`). */
+function isUserVariable(key: string, entryNode: SyntaxNode): boolean {
+  if (referencedNames(entryNode).has(key)) return true;
+  return entryNode.childrenForFieldName("value").some(v => v != null && DEFERRED_VALUE_TYPES.has(unwrapValue(v).type));
+}
+
 function validateNode(node: SyntaxNode, schema: DictSchema, out: SchemaDiagnostic[], ignoreKeys: ReadonlySet<string>) {
   const { entries, blocks } = directMembers(node);
   const candidates = Object.keys(schema);
@@ -129,6 +160,7 @@ function validateNode(node: SyntaxNode, schema: DictSchema, out: SchemaDiagnosti
     if (ignoreKeys.has(key)) continue;
     const spec = schema[key];
     if (!spec) {
+      if (isUserVariable(key, entryNode)) continue;
       const keyNode = entryNode.childForFieldName("key") ?? entryNode;
       out.push({
         range: nodeRange(keyNode),
@@ -145,6 +177,7 @@ function validateNode(node: SyntaxNode, schema: DictSchema, out: SchemaDiagnosti
     if (ignoreKeys.has(key)) continue;
     const spec = schema[key];
     if (!spec) {
+      if (referencedNames(blockNode).has(key)) continue;
       const nameNode = blockNode.childForFieldName("name") ?? blockNode;
       out.push({
         range: nodeRange(nameNode),
@@ -159,6 +192,7 @@ function validateNode(node: SyntaxNode, schema: DictSchema, out: SchemaDiagnosti
     }
   }
 
+  if (hasOpaqueMembers(node)) return;
   for (const [key, spec] of Object.entries(schema)) {
     if (!spec.required) continue;
     if (entries.has(key) || blocks.has(key)) continue;
@@ -241,6 +275,10 @@ export function validateBoundaryConditions(
 ): SchemaDiagnostic[] {
   const bfBlock = directBlocks(tree.rootNode).get("boundaryField");
   if (!bfBlock) return [];
+  // The condition data describes fvPatchFields; point fields use different ones.
+  const fieldClass = directBlocks(tree.rootNode).get("FoamFile");
+  const cls = fieldClass ? directEntry(fieldClass, "class") : undefined;
+  if (cls && /^point/.test(entryValueText(cls) ?? "")) return [];
   const out: SchemaDiagnostic[] = [];
   for (const [, patchBlock] of directBlocks(bfBlock)) {
     const typeEntry = directEntry(patchBlock, "type");
@@ -277,6 +315,10 @@ export function boundaryConditionsForFieldType(
  * old hand-scanned diagnostics never surfaced raw parse errors at all. */
 export function collectParseErrors(tree: Tree): SchemaDiagnostic[] {
   const out: SchemaDiagnostic[] = [];
+  // The cursor must be deleted explicitly: web-tree-sitter 0.27's
+  // FinalizationRegistry path for TreeCursor frees whatever cursor is in its
+  // shared transfer buffer, not this one, which corrupts the Wasm heap and
+  // eventually crashes the server ("memory access out of bounds").
   const cursor = tree.walk();
   const visit = (): void => {
     const node = cursor.currentNode;
@@ -292,6 +334,6 @@ export function collectParseErrors(tree: Tree): SchemaDiagnostic[] {
       cursor.gotoParent();
     }
   };
-  visit();
+  try { visit(); } finally { cursor.delete(); }
   return out;
 }

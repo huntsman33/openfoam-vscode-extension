@@ -46,13 +46,69 @@ export function expandOpenFoamVars(raw: string, caseRoot: string | null): string
   return raw.replace(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, (m, name) => table[name] ?? m);
 }
 
+/**
+ * Expands OpenFOAM's directory tags at the start of an include path:
+ * `<case>/`, `<system>/`, `<constant>/` (relative to the case root) and
+ * `<etc>/` (OpenFOAM's etc directory). Tags that can't be expanded here (no
+ * case root, OpenFOAM not loaded) are left as they are.
+ */
+export function expandOpenFoamTags(raw: string, caseRoot: string | null): string {
+  return raw.replace(/^<(case|system|constant|etc)>(?=\/|$)/, (m, tag: string) => {
+    if (tag === 'etc') return process.env.FOAM_ETC ?? m;
+    if (!caseRoot) return m;
+    return tag === 'case' ? caseRoot : path.join(caseRoot, tag);
+  });
+}
+
+/**
+ * The file an `#includeEtc` path refers to, searched the way OpenFOAM does
+ * (user directories, then the project's etc); `undefined` if that can't be
+ * determined because OpenFOAM isn't loaded in the server's environment.
+ */
+export function resolveEtcInclude(includePath: string): string | null | undefined {
+  const etc = process.env.FOAM_ETC ?? (process.env.WM_PROJECT_DIR && path.join(process.env.WM_PROJECT_DIR, 'etc'));
+  if (!etc) return undefined;
+  const dirs = [etc];
+  const version = process.env.WM_PROJECT_VERSION;
+  if (process.env.HOME && version) {
+    dirs.unshift(path.join(process.env.HOME, '.OpenFOAM', version), path.join(process.env.HOME, '.OpenFOAM'));
+  }
+  for (const d of dirs) {
+    const c = path.join(d, includePath);
+    try { if (fs.statSync(c).isFile()) return c; } catch { /* skip */ }
+  }
+  return null;
+}
+
+/**
+ * Resolves the path of an include-type directive by kind: the file, `null`
+ * if it doesn't exist, or `undefined` if it shouldn't or can't be checked
+ * (`#includeIfPresent` / `#sinclude` are optional by definition, an
+ * `#includeEtc` path needs OpenFOAM's environment, and a `$VAR` or tag may
+ * be unexpandable here).
+ */
+export function resolveIncludeDirective(
+  directive: string,
+  includePath: string,
+  fromUri: string,
+  caseRoot: string | null,
+): string | null | undefined {
+  if (directive === '#includeEtc') return resolveEtcInclude(includePath);
+  const resolved = resolveInclude(includePath, fromUri, caseRoot);
+  if (resolved) return resolved;
+  if (directive === '#includeIfPresent' || directive === '#sinclude') return undefined;
+  const expanded = expandOpenFoamTags(expandOpenFoamVars(includePath, caseRoot), caseRoot);
+  return /\$|^</.test(expanded) ? undefined : null;
+}
+
 export function resolveInclude(
   includePath: string,
   fromUri: string,
   caseRoot: string | null,
 ): string | null {
-  const clean = expandOpenFoamVars(
-    includePath.replace(/^["<]|[">]$/g, '').trim(),
+  // Only quotes are stripped: a leading `<` starts a directory tag.
+  const clean = expandOpenFoamTags(
+    expandOpenFoamVars(includePath.replace(/^"|"$/g, '').trim(), caseRoot),
     caseRoot,
   );
   const fromDir = path.dirname(uriToPath(fromUri));

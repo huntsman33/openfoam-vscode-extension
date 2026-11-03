@@ -74,10 +74,12 @@ describe("fvSchemes (top-level block names)", () => {
   it("real fixture: zero diagnostics", () => {
     expect(validate(parse(fixture("openfoam/fvSchemes")), FVSCHEMES_TOP_LEVEL)).toEqual([]);
   });
-  it("missing required ddtSchemes + unknown top-level block are flagged", () => {
+  it("unknown top-level block is flagged; a missing ddtSchemes is not", () => {
+    // OpenFOAM only reads ddtSchemes when something needs it (e.g. meshing
+    // cases, foamyHexMesh tutorials, omit it), so its absence isn't an error.
     const diags = validate(parse("gradSchems\n{\n    default Gauss linear;\n}\n"), FVSCHEMES_TOP_LEVEL);
     expect(diags.some(d => d.message.includes("gradSchems"))).toBe(true); // typo'd block name
-    expect(diags.some(d => d.message.includes("ddtSchemes"))).toBe(true);
+    expect(diags.some(d => d.message.includes("ddtSchemes"))).toBe(false);
   });
 });
 
@@ -85,9 +87,10 @@ describe("fvSolution (top-level block names)", () => {
   it("real fixture: zero diagnostics", () => {
     expect(validate(parse(fixture("openfoam/fvSolution")), FVSOLUTION_TOP_LEVEL)).toEqual([]);
   });
-  it("missing required solvers block is flagged", () => {
+  it("a missing solvers block is not flagged", () => {
+    // Multi-region top-level fvSolution files hold only the algorithm block.
     const diags = validate(parse("SIMPLE\n{\n    nNonOrthogonalCorrectors 0;\n}\n"), FVSOLUTION_TOP_LEVEL);
-    expect(diags.some(d => d.message.includes("solvers"))).toBe(true);
+    expect(diags.some(d => d.message.includes("solvers"))).toBe(false);
   });
 });
 

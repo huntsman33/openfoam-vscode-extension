@@ -13,18 +13,21 @@ import type { DictSchema } from "./schema";
  */
 
 export const FVSCHEMES_TOP_LEVEL: DictSchema = {
-  ddtSchemes: { type: "dict", required: true, description: "Time derivative discretisation" },
+  ddtSchemes: { type: "dict", description: "Time derivative discretisation" },
+  fluxScheme: { type: "word", options: ["Kurganov", "Tadmor"], description: "Central flux scheme (rhoCentralFoam and other central-scheme solvers)" },
   gradSchemes: { type: "dict", required: false },
   divSchemes: { type: "dict", required: false },
   laplacianSchemes: { type: "dict", required: false },
   interpolationSchemes: { type: "dict", required: false },
   snGradSchemes: { type: "dict", required: false },
   fluxRequired: { type: "dict", required: false },
+  oversetInterpolation: { type: "dict", required: false },
+  oversetInterpolationSuppressed: { type: "dict", required: false },
   wallDist: { type: "dict", required: false },
 };
 
 export const FVSOLUTION_TOP_LEVEL: DictSchema = {
-  solvers: { type: "dict", required: true, description: "Linear solver settings per field" },
+  solvers: { type: "dict", description: "Linear solver settings per field" },
   relaxationFactors: { type: "dict", required: false },
   SIMPLE: { type: "dict", required: false },
   PIMPLE: { type: "dict", required: false },
@@ -36,7 +39,7 @@ export const FVSOLUTION_TOP_LEVEL: DictSchema = {
 };
 
 export const TURBULENCE_PROPERTIES_TOP_LEVEL: DictSchema = {
-  simulationType: { type: "word", required: true, options: ["laminar", "RAS", "LES"] },
+  simulationType: { type: "word", required: true, options: ["laminar", "RAS", "LES", "twoPhaseTransport"] },
   RAS: { type: "dict", required: false },
   LES: { type: "dict", required: false },
 };
@@ -93,6 +96,7 @@ export const SNAPPY_TOP_LEVEL: DictSchema = {
   addLayersControls: { type: "dict", required: false },
   meshQualityControls: { type: "dict", required: false },
   mergeTolerance: { type: "scalar", required: false },
+  writeFlags: { type: "list", required: false },
   debug: { required: false },
 };
 

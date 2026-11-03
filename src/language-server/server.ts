@@ -11,8 +11,9 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import * as fs from "fs";
 import * as path from "path";
-import { findCaseRoot, resolveInclude, resolveVariable, uriToPath, collectVariables, getCaseVariableNames } from './caseContext';
+import { findCaseRoot, resolveInclude, resolveIncludeDirective, resolveVariable, uriToPath, collectVariables, getCaseVariableNames } from './caseContext';
 import { closestMatch } from '../shared/levenshtein';
+import { applyDbOverrides } from './dbOverrides';
 import {
   scanCaseGeometry, getSurfaceNames,
   getBoundaryPatchNames, getSTLRegionsForSurface,
@@ -931,6 +932,7 @@ class OpenFOAMLanguageServer {
       if (fs.existsSync(p)) {
         try {
           this.db = JSON.parse(fs.readFileSync(p, "utf-8")) as KeywordDb;
+          applyDbOverrides(this.db);
           this.conn.console.log(`OpenFOAM LSP loaded keyword-db from ${p}`);
           return;
         } catch { /* try next */ }
@@ -1015,10 +1017,10 @@ class OpenFOAMLanguageServer {
     });
 
     // #include line → show resolved path + first few lines
-    const inclM = lineText.match(/#include\s+["<]([^">]+)[">]/);
+    const inclM = lineText.match(INCLUDE_LINE_RE);
     if (inclM) {
       const caseRoot = findCaseRoot(doc.uri);
-      const resolved = resolveInclude(inclM[1], doc.uri, caseRoot);
+      const resolved = resolveIncludeDirective(inclM[1], inclM[2], doc.uri, caseRoot);
       if (resolved) {
         let preview = '';
         try {
@@ -1933,7 +1935,7 @@ class OpenFOAMLanguageServer {
     if (ft === 'controlDict') this.diagControlDict(lines, diags);
     if (ft === 'turbulenceProperties') this.diagTurbulence(text, lines, diags);
     if (ft === 'boundaryField') this.diagBoundaryField(doc, lines, diags);
-    if (ft === 'blockMeshDict') this.diagBlockMesh(lines, diags);
+    if (ft === 'blockMeshDict') this.diagBlockMesh(doc, lines, diags);
     if (ft === 'decomposeParDict') this.diagDecomposePar(lines, diags);
     if (ft === 'snappyHexMeshDict' || ft === 'helyxHexMeshDict') this.diagSnappyHexMesh(doc, text, lines, diags);
     this.diagIncludes(doc, lines, diags);
@@ -2128,17 +2130,19 @@ class OpenFOAMLanguageServer {
         message: "simulationType is RAS but no RAS { } block found", source: 'openfoam' });
     }
 
+    // OpenFOAM only reads RAS { RASModel } when simulationType is RAS. A model
+    // missing from the list is a warning, not an error: `libs (...)` can load
+    // more (e.g. PDRkEpsilon, the multiphase models).
     const modelM = text.match(/RASModel\s+(\w+)\s*;/);
-    if (modelM) {
+    const valid = Object.keys(this.db.turbulenceModels?.RAS || {});
+    if (simType === 'RAS' && modelM && valid.length && !valid.includes(modelM[1])) {
       const name = modelM[1];
-      if (!(name in (this.db.turbulenceModels?.RAS || {}))) {
-        const valid = Object.keys(this.db.turbulenceModels?.RAS || {});
-        for (let li = 0; li < lines.length; li++) {
-          if (lines[li].includes('RASModel') && lines[li].includes(name)) {
-            diags.push({ range: { start:{line:li,character:0}, end:{line:li,character:lines[li].length} },
-              severity: DiagnosticSeverity.Error,
-              message: `Unknown RASModel '${name}'. Valid: ${valid.join(', ')}`, source: 'openfoam' });
-          }
+      for (let li = 0; li < lines.length; li++) {
+        if (lines[li].includes('RASModel') && lines[li].includes(name)) {
+          diags.push({ range: { start:{line:li,character:0}, end:{line:li,character:lines[li].length} },
+            severity: DiagnosticSeverity.Warning,
+            message: `'${name}' is not a standard RASModel in OpenFOAM v2606 (it may come from a library loaded with libs). Standard: ${valid.join(', ')}`,
+            source: 'openfoam' });
         }
       }
     }
@@ -2148,20 +2152,10 @@ class OpenFOAMLanguageServer {
   private onDocumentLinks(params: DocumentLinkParams): DocumentLink[] {
     const doc = this.docs.get(params.textDocument.uri);
     if (!doc) return [];
-    const caseRoot = findCaseRoot(doc.uri);
     const links: DocumentLink[] = [];
-    const text = doc.getText();
-    const re = /#include\s+["<]([^">]+)[">]/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      const resolved = resolveInclude(m[1], doc.uri, caseRoot);
-      if (!resolved) continue;
-      const pathStart = m.index + m[0].indexOf(m[1]);
-      const range: Range = {
-        start: doc.positionAt(pathStart),
-        end: doc.positionAt(pathStart + m[1].length),
-      };
-      links.push({ range, target: 'file://' + resolved });
+    for (const inc of this.includeDirectives(doc)) {
+      if (!inc.resolved) continue;
+      links.push({ range: inc.pathRange, target: 'file://' + inc.resolved });
     }
     return links;
   }
@@ -2177,9 +2171,9 @@ class OpenFOAMLanguageServer {
     });
 
     // #include line
-    const inclM = lineText.match(/#include\s+["<]([^">]+)[">]/);
+    const inclM = lineText.match(INCLUDE_LINE_RE);
     if (inclM) {
-      const resolved = resolveInclude(inclM[1], doc.uri, caseRoot);
+      const resolved = resolveIncludeDirective(inclM[1], inclM[2], doc.uri, caseRoot);
       if (resolved) return Location.create('file://' + resolved, { start: {line:0,character:0}, end: {line:0,character:0} });
       return null;
     }
@@ -2701,7 +2695,7 @@ class OpenFOAMLanguageServer {
           if (ch === '}') depth--;
         }
         if (depth <= 0) { inCastell = false; continue; }
-        if (/\blocationInMesh\b/.test(ln)) hasLocation = true;
+        if (/\blocations?InMesh\b/.test(ln)) hasLocation = true;
       }
       if (inCastell === false && !hasLocation) {
         // Find the castellatedMeshControls line to attach the error
@@ -2710,7 +2704,7 @@ class OpenFOAMLanguageServer {
             diags.push({
               range: { start: { line: li, character: 0 }, end: { line: li, character: lines[li].length } },
               severity: DiagnosticSeverity.Error,
-              message: 'castellatedMeshControls is missing required key: locationInMesh',
+              message: 'castellatedMeshControls is missing required key: locationInMesh (or locationsInMesh)',
               source: 'openfoam',
             });
             break;
@@ -2771,21 +2765,8 @@ class OpenFOAMLanguageServer {
       }
     }
   }
-  private diagBlockMesh(lines: string[], diags: Diagnostic[]) {
-    let vertexCount = 0;
-    let inVerts = false, parenDepth = 0;
-
-    for (const ln of lines.map(l => stripComments(l).trim())) {
-      if (!inVerts && /\bvertices\b/.test(ln)) { inVerts = true; parenDepth = 0; }
-      if (inVerts) {
-        for (const ch of ln) {
-          if (ch === '(') parenDepth++;
-          if (ch === ')') parenDepth--;
-        }
-        if (parenDepth === 1 && /\(/.test(ln)) vertexCount++;
-        if (parenDepth <= 0 && vertexCount > 0) inVerts = false;
-      }
-    }
+  private diagBlockMesh(doc: TextDocument, lines: string[], diags: Diagnostic[]) {
+    const vertexCount = this.blockMeshVertexCount(doc);
     if (!vertexCount) return;
 
     for (let li = 0; li < lines.length; li++) {
@@ -2803,6 +2784,30 @@ class OpenFOAMLanguageServer {
         }
       }
     }
+  }
+
+  /**
+   * Number of vertices in a blockMeshDict's top-level `vertices` list, counted
+   * from the parse tree: a vector, `project (x y z) (geometry)` and
+   * `name v0 (x y z)` each count once. `undefined` if the list can't be
+   * counted from the text (generated by #codeStream, #include, an expression).
+   */
+  private blockMeshVertexCount(doc: TextDocument): number | undefined {
+    const tree = this.getTree(doc);
+    const entry = tree?.rootNode.namedChildren.find(c => c?.type === 'entry' && c.childForFieldName('key')?.text === 'vertices');
+    const values = entry?.childrenForFieldName('value').filter(v => v != null) ?? [];
+    const list = values.length === 1 ? values[0]!.namedChild(0) : null;
+    if (!list || list.type !== 'list') return undefined;
+    let count = 0;
+    const items = list.namedChildren.filter(c => c != null).map(c => (c!.type === 'value' ? c!.namedChild(0) : c)!);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.type === 'list' || it.type === 'dollar_reference') count++;
+      else if (it.type === 'identifier' && it.text === 'project') { count++; i += 2; }
+      else if (it.type === 'identifier' && it.text === 'name') { i += 1; }
+      else return undefined;
+    }
+    return count;
   }
 
   // ── decomposeParDict diagnostics ──────────────────────────────────────────
@@ -2835,18 +2840,44 @@ class OpenFOAMLanguageServer {
 
   // ── #include file existence ───────────────────────────────────────────────
   private diagIncludes(doc: TextDocument, lines: string[], diags: Diagnostic[]) {
-    const caseRoot = findCaseRoot(doc.uri);
-    for (let li = 0; li < lines.length; li++) {
-      const m = lines[li].match(/#include\s+["<]([^">]+)[">]/);
-      if (!m) continue;
-      const resolved = resolveInclude(m[1], doc.uri, caseRoot);
-      if (!resolved) {
-        diags.push({ range: { start:{line:li,character:0}, end:{line:li,character:lines[li].length} },
-          severity: DiagnosticSeverity.Error,
-          message: `#include: cannot find "${m[1]}"`,
-          source: 'openfoam' });
-      }
+    for (const inc of this.includeDirectives(doc)) {
+      if (inc.resolved !== null) continue;      // found, or can't be checked here
+      const li = inc.pathRange.start.line;
+      diags.push({ range: { start:{line:li,character:0}, end:{line:li,character:lines[li].length} },
+        severity: DiagnosticSeverity.Error,
+        message: `${inc.directive}: cannot find "${inc.path}"`,
+        source: 'openfoam' });
     }
+  }
+
+  /**
+   * Every include-type directive in the parse tree (`#include`, `#includeEtc`,
+   * `#includeIfPresent`, `#sinclude`) with its path resolved. Working from the
+   * tree, not the raw lines, skips `#include` lines inside `#{ ... #}` C++ code
+   * and handles `"<system>/file"`-style paths. `resolved` is the file, `null`
+   * if it doesn't exist, or `undefined` if it can't or shouldn't be checked.
+   */
+  private includeDirectives(doc: TextDocument): { directive: string; path: string; pathRange: Range; resolved: string | null | undefined }[] {
+    const tree = this.getTree(doc);
+    if (!tree) return [];
+    const caseRoot = findCaseRoot(doc.uri);
+    const out = [];
+    for (const node of tree.rootNode.descendantsOfType('include_directive')) {
+      const directive = node?.childForFieldName('name')?.text;
+      const pathNode = node?.childForFieldName('path');
+      if (!directive || !pathNode) continue;
+      const p = pathNode.text.replace(/^"|"$/g, '');
+      out.push({
+        directive,
+        path: p,
+        pathRange: {
+          start: { line: pathNode.startPosition.row, character: pathNode.startPosition.column + 1 },
+          end: { line: pathNode.endPosition.row, character: pathNode.endPosition.column - 1 },
+        },
+        resolved: resolveIncludeDirective(directive, p, doc.uri, caseRoot),
+      });
+    }
+    return out;
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────
@@ -2886,6 +2917,9 @@ const FT_MAP: Record<string, OpenFOAMFileType> = {
   nuTilda: "boundaryField", T: "boundaryField", alpha: "boundaryField",
   "alpha.water": "boundaryField", "p_rgh": "boundaryField",
 };
+
+/** An include-type directive on one line: [1] the directive, [2] its path. */
+const INCLUDE_LINE_RE = /(#include(?:Etc|IfPresent)?|#sinclude)\s+"([^"]+)"/;
 
 function stripComments(line: string): string {
   const i = line.indexOf('//');
